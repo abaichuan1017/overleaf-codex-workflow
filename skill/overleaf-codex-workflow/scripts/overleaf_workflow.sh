@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROGRAM="overleaf-codex"
 REMOTE_DEFAULT="overleaf"
-BRANCH_DEFAULT="master"
+BRANCH_DEFAULT="main"
 PENDING_FILE_REL="overleaf-codex-pending"
 
 say() { printf '%s\n' "$*"; }
@@ -23,7 +23,7 @@ Usage:
   overleaf-codex doctor
 
 Safety model:
-  - setup clones Overleaf and creates local-only AGENTS.md guidance.
+  - setup detects Overleaf's main/master branch and creates local guidance.
   - pull is fast-forward-only and requires a clean working tree.
   - push is two-step: preflight first, then explicit --confirm.
   - no force-push, auto-merge, auto-rebase, auto-stash, or destructive reset.
@@ -36,10 +36,6 @@ require_cmd() {
 
 repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || die "Not inside a Git repository."
-}
-
-git_dir() {
-  git rev-parse --git-dir 2>/dev/null || die "Not inside a Git repository."
 }
 
 remote_name() {
@@ -55,8 +51,15 @@ ensure_managed_repo() {
   repo_root >/dev/null
   remote="$(remote_name)"
   branch="$(remote_branch)"
+  [[ "$remote" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "Managed remote name contains unsupported characters."
   git remote get-url "$remote" >/dev/null 2>&1 || die "Managed remote '$remote' is missing. Run setup or configure overleafCodex.remote."
-  [[ "$branch" == "master" ]] || die "Overleaf synchronization branch must be 'master' (configured: '$branch')."
+  [[ "$branch" == "main" || "$branch" == "master" ]] || die "Overleaf synchronization branch must be 'main' or 'master'."
+  reject_embedded_secret "$(git remote get-url "$remote")"
+  reject_embedded_secret "$(git remote get-url --push "$remote")"
+  [[ "$(git remote get-url --all "$remote" | wc -l | tr -d ' ')" == 1 ]] || die "Managed remote must have exactly one fetch URL."
+  [[ "$(git remote get-url --push --all "$remote" | wc -l | tr -d ' ')" == 1 ]] || die "Managed remote must have exactly one push URL."
+  [[ "$(git remote get-url "$remote")" == "$(git remote get-url --push "$remote")" ]] || die "Managed fetch and push URLs differ. Use one Overleaf collaboration endpoint."
+  cd "$(repo_root)"
 }
 
 working_tree_dirty() {
@@ -78,7 +81,7 @@ staged_hash() {
 }
 
 pending_file() {
-  printf '%s/%s\n' "$(git_dir)" "$PENDING_FILE_REL"
+  git rev-parse --git-path "$PENDING_FILE_REL"
 }
 
 clear_pending() {
@@ -87,8 +90,8 @@ clear_pending() {
 
 reject_embedded_secret() {
   local input="$1"
-  # Reject http(s) URLs containing user:password@host. A username-only URL is fine.
-  if [[ "$input" =~ ^https?://[^/@:]+:[^/@]+@ ]]; then
+  # Overleaf's username-only "git@" is safe; other HTTP userinfo may be a token.
+  if [[ "$input" =~ ^https?://([^/]*@) ]] && [[ "${BASH_REMATCH[1]}" != "git@" ]]; then
     die "Refusing a URL with an embedded password/token. Use a clean Git URL and let Git's credential helper handle authentication."
   fi
 }
@@ -136,9 +139,8 @@ default_directory_name() {
 }
 
 add_info_exclude() {
-  local root exclude marker
-  root="$(repo_root)"
-  exclude="$(git_dir)/info/exclude"
+  local exclude marker
+  exclude="$(git rev-parse --git-path info/exclude)"
   marker="# overleaf-codex-workflow local-only files"
   mkdir -p "$(dirname "$exclude")"
   touch "$exclude"
@@ -156,52 +158,80 @@ EOF_EXCLUDE
 }
 
 skill_dir_from_script() {
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local source="${BASH_SOURCE[0]}" script_dir
+  while [[ -L "$source" ]]; do
+    script_dir="$(cd "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" == /* ]] || source="$script_dir/$source"
+  done
+  script_dir="$(cd "$(dirname "$source")" && pwd)"
   cd "$script_dir/.." && pwd
 }
 
 init_agents() {
-  local root agents override target template label
+  local root agents override target template label branch block
   root="$(repo_root)"
   agents="$root/AGENTS.md"
   override="$root/AGENTS.override.md"
   template="$(skill_dir_from_script)/assets/AGENTS.block.md"
   [[ -f "$template" ]] || die "AGENTS template missing: $template"
+  branch="$(remote_branch)"
+  block="$(sed "s/{{REMOTE}}/$(remote_name)/g; s/{{BRANCH}}/$branch/g" "$template")"
 
   # A tracked AGENTS.md cannot be made local-only with .git/info/exclude.
   # In that case use Codex's higher-precedence AGENTS.override.md instead.
-  if git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1; then
+  if [[ -s "$override" ]] || git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1; then
     if git ls-files --error-unmatch AGENTS.override.md >/dev/null 2>&1; then
       die "Both AGENTS.md and AGENTS.override.md are already tracked. Refusing to modify tracked Codex guidance during setup."
     fi
     target="$override"
     label="AGENTS.override.md"
-    warn "AGENTS.md is already tracked; using local-only AGENTS.override.md so workflow guidance is not pushed to Overleaf."
+    warn "Using AGENTS.override.md; Codex reads it instead of AGENTS.md at this directory."
   else
     target="$agents"
     label="AGENTS.md"
   fi
 
   if [[ ! -f "$target" ]]; then
-    {
-      printf '# %s\n\n' "$label"
-      cat "$template"
-      printf '\n'
-    } > "$target"
+    if [[ "$target" == "$override" && -s "$agents" ]]; then
+      cp -p "$agents" "$target"
+    else
+      printf '# %s\n' "$label" > "$target"
+    fi
     info "Created $target"
-  elif grep -Fq '<!-- overleaf-codex-workflow:start -->' "$target"; then
-    info "$label already contains the Overleaf workflow block; leaving it unchanged."
+  fi
+  if grep -Fq '<!-- overleaf-codex-workflow:start -->' "$target"; then
+    local updated
+    updated="$(OVERLEAF_CODEX_BLOCK="$block" awk '
+      /^<!-- overleaf-codex-workflow:start -->$/ {
+        if (skip || seen++) exit 2
+        print ENVIRON["OVERLEAF_CODEX_BLOCK"]; skip=1; next
+      }
+      /^<!-- overleaf-codex-workflow:end -->$/ {
+        if (!skip) exit 2
+        skip=0; next
+      }
+      !skip { print }
+      END { if (skip || seen != 1) exit 2 }
+    ' "$target")" || die "Malformed managed instruction block in $label; no instructions were changed."
+    [[ "$(cat "$target")" == "$updated" ]] || {
+      cp -p "$target" "$target.overleaf-codex.bak"
+      printf '%s\n' "$updated" > "$target"
+    }
+    info "Updated managed block in $label; preserved other instructions."
   else
     {
       printf '\n\n'
-      cat "$template"
+      printf '%s\n' "$block"
       printf '\n'
     } >> "$target"
     info "Appended Overleaf workflow guidance to existing $label"
   fi
 
   add_info_exclude
+  local exclude
+  exclude="$(git rev-parse --git-path info/exclude)"
+  grep -Fqx '/AGENTS*.overleaf-codex.bak' "$exclude" || printf '%s\n' '/AGENTS*.overleaf-codex.bak' >> "$exclude"
 }
 
 fetch_remote() {
@@ -209,7 +239,7 @@ fetch_remote() {
   remote="$(remote_name)"
   branch="$(remote_branch)"
   info "Fetching $remote/$branch ..."
-  git fetch --prune "$remote" "$branch"
+  git fetch --no-tags "$remote" "refs/heads/$branch:$(remote_ref)"
 }
 
 remote_ref() {
@@ -222,21 +252,12 @@ ensure_remote_ref() {
   git rev-parse --verify "$ref" >/dev/null 2>&1 || die "Remote tracking ref '$ref' not found after fetch."
 }
 
-print_sync_counts() {
-  local ref counts ahead behind
-  ref="$(remote_ref)"
-  counts="$(git rev-list --left-right --count HEAD..."$ref")"
-  ahead="${counts%%[[:space:]]*}"
-  behind="${counts##*[[:space:]]}"
-  printf 'ahead=%s behind=%s\n' "$ahead" "$behind"
-}
-
 cmd_setup() {
   require_cmd git
   [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 2; }
-  local input="$1" url dir remote current_branch root
+  local input="$1" url dir remote branch current_branch root
   url="$(normalize_git_url "$input")"
-  dir="${2:-$(default_directory_name "$input")}" 
+  dir="${2:-$(default_directory_name "$input")}"
 
   if [[ -e "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null || true)" ]]; then
     die "Target directory '$dir' already exists and is not empty."
@@ -244,29 +265,40 @@ cmd_setup() {
 
   info "Cloning Overleaf project into '$dir' ..."
   info "If Git prompts for credentials, use username 'git' and your Overleaf Git authentication token as the password. Do not put the token in the URL."
-  git clone "$url" "$dir"
+  git clone -- "$url" "$dir"
 
-  cd "$dir"
+  cd -- "$dir"
   if git remote get-url origin >/dev/null 2>&1; then
     git remote rename origin "$REMOTE_DEFAULT"
   fi
 
   remote="$REMOTE_DEFAULT"
   git config --local overleafCodex.remote "$remote"
-  git config --local overleafCodex.branch "$BRANCH_DEFAULT"
+  branch="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)"
+  branch="${branch#"$remote/"}"
+  if [[ "$branch" != main && "$branch" != master ]]; then
+    if git show-ref --verify --quiet "refs/remotes/$remote/main"; then
+      branch=main
+    elif git show-ref --verify --quiet "refs/remotes/$remote/master"; then
+      branch=master
+    else
+      die "Remote has no main/master branch. No manuscript files were changed."
+    fi
+  fi
+  git config --local overleafCodex.branch "$branch"
 
   fetch_remote
   ensure_remote_ref
 
   current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  if [[ "$current_branch" != "$BRANCH_DEFAULT" ]]; then
-    if git show-ref --verify --quiet "refs/heads/$BRANCH_DEFAULT"; then
-      git checkout "$BRANCH_DEFAULT"
+  if [[ "$current_branch" != "$branch" ]]; then
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      git checkout "$branch"
     else
-      git checkout -b "$BRANCH_DEFAULT" --track "$(remote_ref)"
+      git checkout -b "$branch" --track "$(remote_ref)"
     fi
   fi
-  git branch --set-upstream-to="$remote/$BRANCH_DEFAULT" "$BRANCH_DEFAULT" >/dev/null 2>&1 || true
+  git branch --set-upstream-to="$remote/$branch" "$branch" >/dev/null
 
   init_agents
   clear_pending
@@ -276,7 +308,7 @@ cmd_setup() {
   info "Setup complete."
   say "Repository: $root"
   say "Remote:     $remote -> $(git remote get-url "$remote")"
-  say "Branch:     $BRANCH_DEFAULT"
+  say "Branch:     $branch"
   say "AGENTS.md:  local-only (excluded from Overleaf)"
   say ""
   say "Next: cd '$root' && codex"
@@ -354,16 +386,20 @@ cmd_status() {
 }
 
 write_pending() {
-  local file head remote_hash staged
+  local file head remote_hash staged target tree
   file="$(pending_file)"
   head="$(git rev-parse HEAD)"
   remote_hash="$(git rev-parse "$(remote_ref)")"
   staged="$(staged_hash)"
+  tree="$(git write-tree)"
+  target="$(printf '%s\n' "$(remote_name)" "$(remote_branch)" "$(git remote get-url "$(remote_name)")" | sha256_stream)"
   cat > "$file" <<EOF_PENDING
-version=1
+version=2
 head=$head
 remote=$remote_hash
 staged=$staged
+target=$target
+tree=$tree
 EOF_PENDING
 }
 
@@ -408,6 +444,11 @@ cmd_push_preflight() {
   say "Repository: $(repo_root)"
   say "Target:     $(remote_name)/$(remote_branch)"
   say "Local commits already ahead: $ahead"
+  if [[ "$ahead" -gt 0 ]]; then
+    say "Existing outgoing commits:"
+    git --no-pager log --oneline "$ref..HEAD"
+    git --no-pager diff --stat "$ref" HEAD
+  fi
   say ""
   say "Staged diffstat:"
   git diff --cached --stat || true
@@ -424,14 +465,18 @@ cmd_push_preflight() {
 cmd_push_confirm() {
   require_cmd git
   ensure_managed_repo
-  local file expected_head expected_remote expected_staged current_staged msg ref
+  local file expected_head expected_remote expected_staged current_staged msg ref target expected_tree
   file="$(pending_file)"
   [[ -f "$file" ]] || die "No pending push preflight. Run 'push' first and review the diff."
+  [[ "$(pending_value version)" == 2 ]] || die "Pending state is from an older workflow. Run push preflight again."
+  target="$(printf '%s\n' "$(remote_name)" "$(remote_branch)" "$(git remote get-url "$(remote_name)")" | sha256_stream)"
+  [[ "$(pending_value target)" == "$target" ]] || die "Push target changed after preflight. Run push preflight again."
 
   expected_head="$(pending_value head)"
   expected_remote="$(pending_value remote)"
   expected_staged="$(pending_value staged)"
-  [[ -n "$expected_head" && -n "$expected_remote" && -n "$expected_staged" ]] || die "Pending push state is invalid. Run preflight again."
+  expected_tree="$(pending_value tree)"
+  [[ -n "$expected_head" && -n "$expected_remote" && -n "$expected_staged" && -n "$expected_tree" ]] || die "Pending push state is invalid. Run preflight again."
 
   [[ "$(git rev-parse HEAD)" == "$expected_head" ]] || die "HEAD changed after preflight. Run push preflight again."
   current_staged="$(staged_hash)"
@@ -453,11 +498,14 @@ cmd_push_confirm() {
     info "No staged file changes; pushing existing local commit(s) only."
   fi
 
+  [[ "$(git rev-parse HEAD^{tree})" == "$expected_tree" ]] || die "Commit hooks changed the reviewed tree. Review the local commit and run preflight again."
+  working_tree_dirty && die "Working tree changed during commit. Review and run preflight again."
+
   # Re-check ancestry after the optional commit.
   git merge-base --is-ancestor "$ref" HEAD || die "Safety check failed after commit."
 
-  info "Pushing local HEAD to $(remote_name)/master ..."
-  git push "$(remote_name)" HEAD:master
+  info "Pushing local HEAD to $(remote_name)/$(remote_branch) ..."
+  git -c push.followTags=false push --no-follow-tags --recurse-submodules=no "$(remote_name)" "HEAD:refs/heads/$(remote_branch)"
   clear_pending
   info "Push complete."
 }
@@ -484,14 +532,14 @@ cmd_doctor() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     say "[ok] repository: $(repo_root)"
     if git remote get-url "$(remote_name)" >/dev/null 2>&1; then
-      say "[ok] managed remote: $(remote_name) -> $(git remote get-url "$(remote_name)")"
+      say "[ok] managed remote: $(remote_name), branch: $(remote_branch)"
     else
       say "[missing] managed remote '$(remote_name)'"
     fi
     local helper
     helper="$(git config --get credential.helper 2>/dev/null || true)"
     if [[ -n "$helper" ]]; then
-      say "[ok] Git credential helper configured: $helper"
+      say "[ok] Git credential helper configured"
     else
       say "[note] No credential.helper detected in this repo/config chain. Git may ask for your Overleaf token on each network operation."
     fi

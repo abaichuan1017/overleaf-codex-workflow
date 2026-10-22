@@ -5,7 +5,7 @@ Contributions are welcome. Please keep the project focused on the Overleaf/Git/C
 Before opening a pull request:
 
 ```bash
-bash tests/test.sh
+bash tests/run.sh
 ```
 
 Please preserve these invariants:
@@ -14,4 +14,6 @@ Please preserve these invariants:
 2. No automatic destructive reset/rebase/merge/stash behavior.
 3. No secret/token storage in tracked files.
 4. Push remains a two-step review + confirmation operation.
-5. Overleaf's synchronization target remains `master` unless Overleaf changes its documented Git behavior.
+5. Detect Overleaf's current `main` or legacy `master` branch; preserve existing configurations.
+
+The suite includes isolated install/upgrade/uninstall and both synchronization branches. It does not require Overleaf credentials or an LLM API key.

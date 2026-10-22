@@ -24,10 +24,10 @@ git clone "$REMOTE" "$SEED" >/dev/null 2>&1
 cd "$SEED"
 git checkout -b master >/dev/null 2>&1
 cat > main.tex <<'TEX'
-\\documentclass{article}
-\\begin{document}
+\documentclass{article}
+\begin{document}
 Hello Overleaf.
-\\end{document}
+\end{document}
 TEX
 git add main.tex
 git commit -m "Initial manuscript" >/dev/null

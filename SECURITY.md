@@ -4,7 +4,7 @@
 
 Never report an Overleaf authentication token in an issue, log, screenshot, commit, prompt, or Git remote URL.
 
-This project deliberately delegates authentication to Git and rejects HTTP(S) setup URLs containing embedded `user:password@host` credentials.
+Authentication is delegated to Git. HTTP(S) URLs with embedded credentials are rejected; the standard username-only `git@` form is allowed. Managed fetch and push endpoints must match.
 
 If a token is accidentally exposed, revoke it in Overleaf Account Settings and create a new token.
 
@@ -19,3 +19,5 @@ The intended behavior is:
 - separate confirmation before commit/push,
 - confirmation invalidated when reviewed state changes,
 - no force push.
+
+The CLI cannot authenticate a human's approval: the agent/operator must obtain approval for the reviewed state before using `--confirm`. Local integration tests validate Git behavior, not real Overleaf credentials or remote compilation.

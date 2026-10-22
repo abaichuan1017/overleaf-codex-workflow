@@ -9,25 +9,13 @@ permissions:
 
 jobs:
   safety-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Bash syntax
-        run: |
-          bash -n install.sh
-          bash -n uninstall.sh
-          bash -n skill/overleaf-codex-workflow/scripts/overleaf_workflow.sh
-          bash -n tests/test.sh
-
-      - name: Workflow safety tests
-        run: bash tests/test.sh
-
-      - name: Installer smoke test
-        run: |
-          TEST_HOME="$(mktemp -d)"
-          HOME="$TEST_HOME" bash ./install.sh
-          test -f "$TEST_HOME/.agents/skills/overleaf-codex-workflow/SKILL.md"
-          test -x "$TEST_HOME/.agents/skills/overleaf-codex-workflow/scripts/overleaf_workflow.sh"
-          test -L "$TEST_HOME/.local/bin/overleaf-codex"
-          HOME="$TEST_HOME" "$TEST_HOME/.local/bin/overleaf-codex" --help >/dev/null
+      - name: Syntax, workflow, and installation integration checks
+        run: bash tests/run.sh

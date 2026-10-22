@@ -1,6 +1,6 @@
 interface:
   display_name: "Overleaf Codex Workflow"
   short_description: "Safe pull-edit-review-push workflow for Overleaf Git manuscripts"
-  default_prompt: "Use the Overleaf workflow to safely sync and edit this manuscript."
+  default_prompt: "Use $overleaf-codex-workflow to inspect and safely synchronize this Overleaf manuscript."
 policy:
   allow_implicit_invocation: true

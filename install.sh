@@ -22,6 +22,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--repo requires a path" >&2; exit 2; }
       SCOPE="repo"
       TARGET_REPO="$2"
+      INSTALL_CLI=0
       shift 2
       ;;
     --no-cli)
@@ -48,17 +49,31 @@ else
 fi
 
 DEST="$DEST_BASE/overleaf-codex-workflow"
+CLI="${HOME}/.local/bin/overleaf-codex"
+if [[ "$INSTALL_CLI" -eq 1 && ( -e "$CLI" || -L "$CLI" ) ]]; then
+  [[ -L "$CLI" && "$(readlink "$CLI")" == */overleaf-codex-workflow/scripts/overleaf_workflow.sh ]] || {
+    echo "Refusing to replace an unrelated CLI: $CLI" >&2
+    exit 1
+  }
+fi
 mkdir -p "$DEST_BASE"
-rm -rf "$DEST"
-cp -R "$SOURCE" "$DEST"
-chmod +x "$DEST/scripts/overleaf_workflow.sh"
+STAGING="$(mktemp -d "$DEST_BASE/.overleaf-codex-install.XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT
+cp -R "$SOURCE" "$STAGING/skill"
+chmod +x "$STAGING/skill/scripts/overleaf_workflow.sh"
+if [[ -e "$DEST" || -L "$DEST" ]]; then
+  BACKUP="$(mktemp -d "$DEST_BASE/.overleaf-codex-backup.XXXXXX")"
+  mv "$DEST" "$BACKUP/skill"
+  echo "Previous skill preserved: $BACKUP/skill"
+fi
+mv "$STAGING/skill" "$DEST"
 
 echo "Installed Codex skill: $DEST"
 
 if [[ "$INSTALL_CLI" -eq 1 ]]; then
   BIN_DIR="${HOME}/.local/bin"
   mkdir -p "$BIN_DIR"
-  ln -sfn "$DEST/scripts/overleaf_workflow.sh" "$BIN_DIR/overleaf-codex"
+  ln -sfn "$DEST/scripts/overleaf_workflow.sh" "$CLI"
   echo "Installed CLI symlink: $BIN_DIR/overleaf-codex"
   case ":${PATH}:" in
     *":$BIN_DIR:"*) ;;

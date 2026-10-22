@@ -1,633 +1,125 @@
-# overleaf-codex-workflow
+# Overleaf Codex Workflow
 
-**中文 | [English](#english)**
-
-一个轻量、保守、安全优先的 **Codex Agent Skill**，用于一次配置后管理完整的 **Overleaf ↔ Git ↔ Codex** 论文工作流。
-
-它不负责“替你写论文”，而是负责论文仓库生命周期：拉取 Overleaf 最新版本、生成 Codex 项目指令、让 Codex 在本地修改 LaTeX，并且只有在你明确要求后才经过检查、确认、提交并推送回 Overleaf。
-
-```text
-Overleaf
-   │
-   │  pull（仅 fast-forward）
-   ▼
-本地 Git 仓库  ←→  Codex 在这里修改 LaTeX
-   │
-   │  push 预检 → 人工确认 → commit + push
-   ▼
-Overleaf
-```
+[中文](#中文) · [English](#english)
 
 ## 中文
 
-### 功能
-
-- **一次配置** Overleaf 项目，之后重复使用。
-- 支持输入 Overleaf 项目 URL、Git URL 或 project ID。
-- 自动 clone 到本地，并将远端统一命名为 `overleaf`。
-- 自动创建项目级 Codex 指令：通常是 `AGENTS.md`。
-- 如果论文仓库已经跟踪 `AGENTS.md`，自动改用本地 `AGENTS.override.md`，避免污染已有文件。
-- `AGENTS.md` / `AGENTS.override.md`、`.agents/`、`.codex/` 默认通过 `.git/info/exclude` 保持为**本地文件**，不会上传到 Overleaf。
-- 安全 `pull`：要求工作区干净，仅允许 fast-forward，不自动 stash / merge / rebase / reset。
-- `status`：fetch 后报告 synchronized / local ahead / Overleaf ahead / diverged，并展示未提交改动。
-- **两阶段 push**：第一次只 stage、检查并展示变更；第二次必须显式确认才会 commit + push。
-- 如果 review 之后 staged diff、HEAD 或 Overleaf 远端发生变化，之前的 push 确认自动失效。
-- 永不 force-push，永不自动改写历史。
-- 不把 Overleaf token 写入仓库、`AGENTS.md` 或 Git remote URL；认证交给 Git credential helper。
-- 除 Agent Skill 外，也提供 `overleaf-codex` CLI，可脱离 Codex 单独使用。
-
-### 适用场景
-
-你希望长期保持这种工作方式：
+让 Codex 在本地修改 Overleaf 论文，经过审阅后同步回去。提供 Agent Skill 和独立 CLI，支持当前 `main` 与旧版 `master` 项目。
 
 ```text
-第一次：配置一次 Overleaf
-          ↓
-以后：pull → Codex 修改 → status → push 预检 → 你确认 → 上传
+Overleaf → pull → 本地编辑与验证 → push 预检 → 确认 → Overleaf
 ```
 
-例如：
+### 安装与配置
 
-```text
-$overleaf-codex-workflow pull
-
-把 Introduction 第二段改得更清楚。
-不要修改 citation、实验数字、figure 和 contribution claim。
-
-$overleaf-codex-workflow status
-$overleaf-codex-workflow push
-```
-
-查看预检结果后，你明确确认：
-
-```text
-$overleaf-codex-workflow push --confirm "Revise introduction motivation"
-```
-
-只有这一步才真正执行 commit + push。
-
-### 环境要求
-
-- Git
-- Bash（Linux、macOS、WSL 或 Git Bash）
-- Codex CLI / IDE extension（使用 Skill 时需要）
-- 一个已启用 Git integration 的 Overleaf 项目/方案
-- Overleaf Git authentication token
-
-Overleaf Git integration 的同步目标使用 `master`。本工具始终把本地 `HEAD` 安全地推送到 `overleaf/master`。
-
-### 安装
-
-下载或 clone 本仓库后：
+需要 Git、Bash，以及支持 Git integration 的 Overleaf 项目；使用 Skill 还需要可执行本地命令的 Codex 环境（桌面端、CLI 或 IDE）。
 
 ```bash
+git clone https://github.com/abaichuan1017/overleaf-codex-workflow.git
+cd overleaf-codex-workflow
 ./install.sh
 ```
 
-默认安装到 Codex 用户级 Skill 目录：
-
-```text
-~/.agents/skills/overleaf-codex-workflow/
-```
-
-并创建命令：
-
-```text
-~/.local/bin/overleaf-codex
-```
-
-如果 `~/.local/bin` 不在 `PATH`，请将其加入 `PATH`，或者直接通过 Codex Skill 使用。
-
-#### 安装到某个仓库
-
-也可以把 Skill 安装为 repo-local skill：
+默认安装到 `~/.agents/skills/overleaf-codex-workflow`，并创建 `~/.local/bin/overleaf-codex`。把 `~/.local/bin` 加入 `PATH`，然后重启 Codex 会话以加载 Skill。
 
 ```bash
-./install.sh --repo /path/to/repository
-```
-
-### 第一次配置 Overleaf 项目
-
-在 Codex 中：
-
-```text
-$overleaf-codex-workflow setup https://www.overleaf.com/project/<PROJECT_ID> ~/papers/my-paper
-```
-
-或者直接在终端运行：
-
-```bash
-overleaf-codex setup https://www.overleaf.com/project/<PROJECT_ID> ~/papers/my-paper
-```
-
-你也可以直接传入 Overleaf 提供的 Git URL 或 project ID。
-
-第一次进行网络 Git 操作时，Git 可能要求认证：
-
-```text
-username: git
-password: <你的 Overleaf Git authentication token>
-```
-
-**不要把 token 放进 URL，也不要把 token 粘贴给 Codex / ChatGPT。** 如果希望记住凭据，请在本机配置可信的 Git credential helper。
-
-配置完成后：
-
-```bash
+overleaf-codex setup https://www.overleaf.com/project/PROJECT_ID ~/papers/my-paper
 cd ~/papers/my-paper
-codex
 ```
 
-项目根目录此时已经拥有本地 Codex 指令文件。
+也可以传入项目 ID 或 Overleaf 提供的 Git URL。Git 首次认证时，用户名填 `git`，密码填 Overleaf Git token；在本机 Git 提示框输入，凭据交给可信的 Git credential helper，**不要粘贴到聊天或 URL**。
 
-### 日常工作流
+### 日常使用
 
-#### 1. 修改前先拉取
-
-```text
-$overleaf-codex-workflow pull
-```
-
-`pull` 会要求工作区干净，并使用 fast-forward-only 更新。遇到脏工作区或 divergent history 时会停止，不会自动处理。
-
-#### 2. 让 Codex 正常修改论文
-
-例如：
-
-```text
-重写 Introduction 第二段，让 motivation 更清楚。
-保持现有 citation，不修改实验数字、figure、label 和 contribution claim。
-```
-
-默认生成的 `AGENTS.md` 会持续提醒 Codex遵守论文仓库的安全规则。
-
-#### 3. 查看同步状态
-
-```text
-$overleaf-codex-workflow status
-```
-
-也可以使用 CLI：
+在论文目录运行：
 
 ```bash
-overleaf-codex status
-```
-
-#### 4. 发起 push 预检
-
-```text
-$overleaf-codex-workflow push
-```
-
-第一次 `push` **不会 commit，也不会 push**。它只会：
-
-1. fetch Overleaf；
-2. 检查是否 remote-ahead / diverged；
-3. stage 本地修改；
-4. 运行 `git diff --cached --check`；
-5. 展示 diffstat 和变更文件；
-6. 保存一个安全快照。
-
-#### 5. 人工确认后才真正上传
-
-确认变更正确以后：
-
-```text
-$overleaf-codex-workflow push --confirm "Update manuscript"
-```
-
-确认阶段会再次 fetch。如果下列任意状态在 review 后发生变化，push 会被拒绝：
-
-- staged diff；
-- 本地 `HEAD`；
-- Overleaf remote；
-- Git 历史关系。
-
-### CLI 命令
-
-```bash
-overleaf-codex setup <url|git-url|project-id> [directory]
 overleaf-codex pull
+# 让 Codex 按要求修改论文，并运行项目现有的编译/检查命令。
 overleaf-codex status
-overleaf-codex push
-overleaf-codex push --confirm ["commit message"]
-overleaf-codex init-agents
-overleaf-codex doctor
+overleaf-codex push                # 暂存全部非忽略改动，展示待上传内容；不会提交或上传
 ```
 
-### 为什么默认这么保守？
-
-论文通常是多人协作。静默执行 merge / rebase / stash / reset，可能覆盖自己或合作者刚刚完成的修改。
-
-因此这个项目明确**不会自动**：
-
-- stash 本地修改；
-- merge divergent histories；
-- rebase；
-- reset / discard 文件；
-- 自动解决冲突；
-- force-push。
-
-遇到复杂状态时，它的原则是：**停止、展示状态、让人决定下一步。**
-
-### `AGENTS.md` 行为
-
-setup 会写入带有以下 marker 的管理块：
-
-```text
-<!-- overleaf-codex-workflow:start -->
-...
-<!-- overleaf-codex-workflow:end -->
-```
-
-规则如下：
-
-- 如果没有 `AGENTS.md`：创建本地 `AGENTS.md`。
-- 如果已有未跟踪/本地 `AGENTS.md`：保留原内容，只追加 workflow block。
-- 如果 `AGENTS.md` 已经被论文仓库跟踪：不修改它，改为创建本地 `AGENTS.override.md`。
-- 如果 `AGENTS.md` 和 `AGENTS.override.md` 都已经被跟踪：直接停止，避免静默改变项目级 Codex 指令。
-
-本地指令通过 `.git/info/exclude` 排除，而不是修改论文仓库的 `.gitignore`。
-
-### Token 与凭据安全
-
-本 Skill 不读取、不保存 Overleaf token。认证完全委托给 Git。
-
-推荐流程：
-
-1. 在 Overleaf Account Settings 中创建 Git authentication token；
-2. 在你自己的终端执行一次 Git 网络操作；
-3. username 输入 `git`；
-4. password 输入 token；
-5. 如需持久化，使用可信的系统/Git credential helper。
-
-setup 会拒绝形如 `https://user:password@host/...` 的 URL，降低 token 被写入历史或日志的风险。
-
-### 测试
-
-测试不需要真实 Overleaf 账号，会使用本地 bare Git repository 模拟 Overleaf remote：
+审阅 `git diff --cached` 以及预检列出的已有提交，确认后执行：
 
 ```bash
-bash tests/test.sh
+overleaf-codex push --confirm "Revise introduction"
 ```
 
-GitHub Actions 也会自动执行 Bash syntax check 和安全测试。
-
-### 项目结构
+在 Codex 中也可直接说：
 
 ```text
-overleaf-codex-workflow/
-├── README.md                 # 中文 + English
-├── VERSION
-├── LICENSE
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── install.sh
-├── uninstall.sh
-├── .github/
-│   └── workflows/
-│       └── test.yml
-├── tests/
-│   └── test.sh
-└── skill/
-    └── overleaf-codex-workflow/
-        ├── SKILL.md
-        ├── agents/
-        │   └── openai.yaml
-        ├── assets/
-        │   └── AGENTS.block.md
-        └── scripts/
-            └── overleaf_workflow.sh
+使用 $overleaf-codex-workflow 拉取最新论文。
+把 Introduction 第二段写清楚，保持引用和实验数字不变，编译检查后给我看差异。
 ```
 
-### 设计依据
+之后明确要求上传；Skill 会展示预检结果并等待对该版本的确认。已确认的同一版本无需重复批准。普通论文编辑请求不会触发上传。
 
-本项目按以下官方文档的当前行为设计：
+### 保护与升级
 
-- OpenAI Codex Agent Skills: https://developers.openai.com/codex/build-skills
-- OpenAI Codex `AGENTS.md`: https://developers.openai.com/codex/agent-configuration/agents-md
-- Overleaf Git integration: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git
-- Overleaf Git authentication tokens: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git/git-integration-authentication-tokens
-- Overleaf advanced Git operations: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations
+- `pull` 只接受干净工作区和 fast-forward；不自动 stash、解决分歧或改写历史，不 force-push。
+- 推送前复核远端、分支、HEAD、暂存内容和工作区；审阅后有变化会拒绝上传。
+- 项目指令默认保存在本地，通过 `.git/info/exclude` 排除。若已有被跟踪的 `AGENTS.md`，先复制其中规则到本地 override；**已有被跟踪的文件不会因 exclude 而停止上传**。
+- 重新运行安装会保留旧 Skill，备份路径会打印出来。更新项目指令用 `overleaf-codex init-agents`，重启会话生效。override 中复制的项目规则需随原文件变化手动核对。
+- 仅为某个仓库安装：`./install.sh --repo /path/to/repository`，不改全局 CLI；卸载用 `./uninstall.sh --repo /path/to/repository`。用户级卸载用 `./uninstall.sh`，保留论文和安装备份。
 
-### License
+这是文件与 Git 工作流，不绑定 GPT 型号、不调用模型 API，也不需要 OpenAI API key。新版优化聚焦精简上下文、按需读取说明和保留可验证的同步检查。
 
-MIT
+## English
 
----
+Edit an Overleaf manuscript locally with Codex, then review and synchronize it. Includes an Agent Skill and standalone CLI; detects current `main` and legacy `master` projects.
 
-<a id="english"></a>
-
-# English
-
-A small, conservative, safety-first **Codex Agent Skill** for a one-time-configured **Overleaf ↔ Git ↔ Codex** manuscript workflow.
-
-It does **not** try to write your paper for you. It manages the repository lifecycle around the manuscript: pull the newest Overleaf state, initialize Codex project guidance, let Codex edit LaTeX locally, and only commit/push after an explicit user request and review gate.
-
-```text
-Overleaf
-   │
-   │  pull (fast-forward only)
-   ▼
-local Git repository  ←→  Codex edits LaTeX here
-   │
-   │  push preflight → human confirmation → commit + push
-   ▼
-Overleaf
-```
-
-## Features
-
-- One-time Overleaf project setup.
-- Accepts an Overleaf project URL, Git URL, or project ID.
-- Clones the project and renames the remote to `overleaf`.
-- Automatically creates project-level Codex guidance, normally `AGENTS.md`.
-- If the manuscript already tracks `AGENTS.md`, creates a local `AGENTS.override.md` instead of modifying the tracked file.
-- Keeps `AGENTS.md` / `AGENTS.override.md`, `.agents/`, and `.codex/` local-only through `.git/info/exclude`, so Codex configuration is not uploaded to Overleaf.
-- Safe `pull`: requires a clean tree, fast-forward only, with no automatic stash / merge / rebase / reset.
-- Useful `status`: fetches Overleaf and reports synchronized / local ahead / Overleaf ahead / diverged state plus uncommitted changes.
-- **Two-stage push**: the first command only stages, checks, and displays changes; a second explicit confirmation is required before commit + push.
-- Invalidates the previous push approval if the staged diff, local HEAD, or Overleaf remote changes after review.
-- Never force-pushes or silently rewrites history.
-- Never stores an Overleaf token in the repository, `AGENTS.md`, or Git remote URL; authentication is delegated to Git credential helpers.
-- Works as both a Codex skill and a small standalone `overleaf-codex` CLI.
-
-## Intended workflow
-
-Configure once, then repeat:
-
-```text
-first time: configure Overleaf once
-                 ↓
-later: pull → Codex edit → status → push preflight → approve → upload
-```
-
-Example:
-
-```text
-$overleaf-codex-workflow pull
-
-Rewrite the second paragraph of the Introduction to make the motivation clearer.
-Do not change citations, numerical results, figures, or contribution claims.
-
-$overleaf-codex-workflow status
-$overleaf-codex-workflow push
-```
-
-After reviewing the preflight output, explicitly confirm:
-
-```text
-$overleaf-codex-workflow push --confirm "Revise introduction motivation"
-```
-
-Only the confirmation step can create a commit and push it to Overleaf.
-
-## Requirements
-
-- Git
-- Bash (Linux, macOS, WSL, or Git Bash)
-- Codex CLI / IDE extension for skill use
-- An Overleaf project/plan with Git integration enabled
-- An Overleaf Git authentication token
-
-Overleaf Git integration synchronizes through `master`. This workflow always pushes local `HEAD` to `overleaf/master` without force.
-
-## Install
-
-Clone or download this repository, then run:
+Requires Git, Bash, an Overleaf project with Git integration, and a Codex environment with local command execution for Skill use.
 
 ```bash
+git clone https://github.com/abaichuan1017/overleaf-codex-workflow.git
+cd overleaf-codex-workflow
 ./install.sh
-```
-
-The skill is installed to the current Codex user-level skill location:
-
-```text
-~/.agents/skills/overleaf-codex-workflow/
-```
-
-By default it also creates:
-
-```text
-~/.local/bin/overleaf-codex
-```
-
-If `~/.local/bin` is not on your `PATH`, add it or invoke the skill directly from Codex.
-
-### Repository-local installation
-
-You can also install it as a repo-local skill:
-
-```bash
-./install.sh --repo /path/to/repository
-```
-
-## First-time Overleaf setup
-
-From Codex:
-
-```text
-$overleaf-codex-workflow setup https://www.overleaf.com/project/<PROJECT_ID> ~/papers/my-paper
-```
-
-Or from a terminal:
-
-```bash
-overleaf-codex setup https://www.overleaf.com/project/<PROJECT_ID> ~/papers/my-paper
-```
-
-You may also pass the Git URL shown by Overleaf or a project ID.
-
-On the first network Git operation, Git may ask for credentials:
-
-```text
-username: git
-password: <your Overleaf Git authentication token>
-```
-
-**Never embed the token in the URL or paste it into an AI prompt.** Configure a trusted Git/OS credential helper locally if you want Git to remember it.
-
-After setup:
-
-```bash
+# Add ~/.local/bin to PATH and restart your Codex session.
+overleaf-codex setup https://www.overleaf.com/project/PROJECT_ID ~/papers/my-paper
 cd ~/papers/my-paper
-codex
-```
-
-The repository now has local Codex project guidance.
-
-## Daily workflow
-
-### 1. Pull before editing
-
-```text
-$overleaf-codex-workflow pull
-```
-
-Pull requires a clean working tree and updates only with fast-forward semantics. Dirty trees and divergent history cause the workflow to stop instead of guessing.
-
-### 2. Ask Codex to edit normally
-
-For example:
-
-```text
-Rewrite the second paragraph of the Introduction to make the motivation clearer.
-Preserve existing citations, experiment numbers, figures, labels, and contribution claims.
-```
-
-The generated `AGENTS.md` guidance keeps the repository safety rules active in future Codex sessions.
-
-### 3. Inspect synchronization state
-
-```text
-$overleaf-codex-workflow status
-```
-
-Or use the CLI:
-
-```bash
-overleaf-codex status
-```
-
-### 4. Start a push preflight
-
-```text
-$overleaf-codex-workflow push
-```
-
-The first `push` command **does not commit and does not push**. It only:
-
-1. fetches Overleaf;
-2. rejects remote-ahead or diverged history;
-3. stages local changes;
-4. runs `git diff --cached --check`;
-5. prints the diffstat and changed files;
-6. records a safety snapshot.
-
-### 5. Upload only after human confirmation
-
-After reviewing the changes:
-
-```text
-$overleaf-codex-workflow push --confirm "Update manuscript"
-```
-
-The confirmation step fetches Overleaf again. It aborts if any reviewed state has changed, including:
-
-- staged diff;
-- local `HEAD`;
-- Overleaf remote;
-- Git ancestry relationship.
-
-## CLI commands
-
-```bash
-overleaf-codex setup <url|git-url|project-id> [directory]
 overleaf-codex pull
+# Edit and validate with the manuscript's existing build command.
 overleaf-codex status
 overleaf-codex push
-overleaf-codex push --confirm ["commit message"]
-overleaf-codex init-agents
-overleaf-codex doctor
+# Review git diff --cached and any outgoing commits before confirming:
+overleaf-codex push --confirm "Revise introduction"
 ```
 
-## Why so conservative?
+You can invoke `$overleaf-codex-workflow` in Codex instead. An upload requires an explicit request and approval of the reviewed state; editing alone does not authorize it. Enter Overleaf credentials directly into Git's prompt (username `git`, password your Git token), using a trusted credential helper. Never put tokens in chat or URLs.
 
-Academic manuscripts are often edited collaboratively. Silent merge / rebase / stash / reset behavior can overwrite or obscure changes made by you or your collaborators.
+Pulls require a clean tree and fast-forward history. Uploads recheck the endpoint, branch, HEAD, staged content, and worktree. No automatic stashing, divergent merges, history rewriting, or force-push. Generated guidance stays local; tracked files remain tracked. A new override copies existing project rules because Codex reads an override instead of its sibling `AGENTS.md`; reconcile copied rules when the original changes.
 
-Therefore the workflow deliberately does **not** automatically:
+Reinstall to upgrade; the previous Skill is backed up. Run `overleaf-codex init-agents` to refresh the managed instruction block and restart Codex. `./install.sh --repo /path/to/repository` installs locally without changing the global CLI. Uninstall with `./uninstall.sh` or `./uninstall.sh --repo /path/to/repository`; manuscripts and upgrade backups are preserved.
 
-- stash local edits;
-- merge divergent histories;
-- rebase;
-- reset or discard files;
-- resolve conflicts;
-- force-push.
+The workflow does not select a GPT model or call a model API. Its current Codex adaptation uses concise instructions, on-demand references, and deterministic Git checks.
 
-When synchronization becomes non-trivial, the rule is: **stop, show the state, let the human decide.**
-
-## `AGENTS.md` behavior
-
-Setup adds a managed block delimited by:
+## Commands / 命令
 
 ```text
-<!-- overleaf-codex-workflow:start -->
-...
-<!-- overleaf-codex-workflow:end -->
+setup <project-url|git-url|project-id> [directory]
+pull
+status
+push
+push --confirm [commit message]
+init-agents
+doctor
 ```
 
-Rules:
+Detailed behavior / 详细行为：[workflow.md](skill/overleaf-codex-workflow/references/workflow.md)
 
-- No `AGENTS.md`: create a local `AGENTS.md`.
-- Existing untracked/local `AGENTS.md`: preserve it and append the workflow block.
-- Tracked `AGENTS.md`: leave it untouched and create a local `AGENTS.override.md` instead.
-- Both `AGENTS.md` and `AGENTS.override.md` tracked: stop instead of silently modifying tracked Codex guidance.
-
-Local guidance is excluded through `.git/info/exclude`, not by modifying the manuscript's tracked `.gitignore`.
-
-## Authentication and secrets
-
-The skill does not read or store your Overleaf token. Authentication is delegated to Git.
-
-Recommended flow:
-
-1. Generate a Git authentication token in Overleaf Account Settings.
-2. Run a Git network operation in your own terminal.
-3. Enter username `git`.
-4. Enter the token as the password.
-5. Use a trusted OS/Git credential helper if you want persistence.
-
-Setup rejects URLs in the form `https://user:password@host/...` to reduce accidental secret leakage into shell history, logs, or repository configuration.
-
-## Test
-
-No real Overleaf account is needed. The test suite creates a local bare Git repository as a fake Overleaf remote:
+## Tests / 测试
 
 ```bash
-bash tests/test.sh
+bash tests/run.sh
 ```
 
-GitHub Actions also runs Bash syntax checks and the safety test suite.
+Tests use temporary local Git remotes and isolated installation directories. They cover setup, editing, review, upload, collaborator changes, both branch names, instruction preservation, linked worktrees, and install/upgrade/uninstall. CI runs on Linux and macOS. These checks do not establish live Overleaf authentication, remote compilation, or a specific GPT model's behavior.
 
-## Project structure
+## References / 依据
 
-```text
-overleaf-codex-workflow/
-├── README.md                 # 中文 + English
-├── VERSION
-├── LICENSE
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── install.sh
-├── uninstall.sh
-├── .github/
-│   └── workflows/
-│       └── test.yml
-├── tests/
-│   └── test.sh
-└── skill/
-    └── overleaf-codex-workflow/
-        ├── SKILL.md
-        ├── agents/
-        │   └── openai.yaml
-        ├── assets/
-        │   └── AGENTS.block.md
-        └── scripts/
-            └── overleaf_workflow.sh
-```
+- [OpenAI: concise skills and project instructions](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)
+- [Codex Skills](https://learn.chatgpt.com/docs/build-skills) · [AGENTS.md precedence](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+- [Overleaf Git integration and main/master compatibility](https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration)
 
-## Design references
-
-The workflow is aligned with the current public behavior documented by:
-
-- OpenAI Codex Agent Skills: https://developers.openai.com/codex/build-skills
-- OpenAI Codex `AGENTS.md`: https://developers.openai.com/codex/agent-configuration/agents-md
-- Overleaf Git integration: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git
-- Overleaf Git authentication tokens: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git/git-integration-authentication-tokens
-- Overleaf advanced Git operations: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations
-
-## License
-
-MIT
+[MIT License](LICENSE) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)

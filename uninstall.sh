@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-DEST="${HOME}/.agents/skills/overleaf-codex-workflow"
+DEST_BASE="${HOME}/.agents/skills"
+case "${1:-}" in
+  "") [[ $# -eq 0 ]] || exit 2 ;;
+  --repo)
+    [[ $# -eq 2 ]] || { echo 'Usage: ./uninstall.sh [--repo /path/repo]' >&2; exit 2; }
+    DEST_BASE="$(cd "$2" && pwd)/.agents/skills"
+    ;;
+  *) echo 'Usage: ./uninstall.sh [--repo /path/repo]' >&2; exit 2 ;;
+esac
+DEST="$DEST_BASE/overleaf-codex-workflow"
 CLI="${HOME}/.local/bin/overleaf-codex"
 rm -rf "$DEST"
-if [[ -L "$CLI" ]]; then rm -f "$CLI"; fi
+if [[ -L "$CLI" && "$(readlink "$CLI")" == "$DEST/scripts/overleaf_workflow.sh" ]]; then
+  rm -f "$CLI"
+fi
 echo "Removed $DEST"
 echo "Existing manuscript repositories and their AGENTS.md files were not modified."
