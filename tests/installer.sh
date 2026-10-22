@@ -42,6 +42,10 @@ env HOME="$TEST_HOME" bash "$ROOT/install.sh" --repo "$TEST_REPO" >/dev/null
 [[ "$(readlink "$CLI")" == "$link_before" ]] || fail 'repo install changed global CLI'
 env HOME="$TEST_HOME" bash "$ROOT/uninstall.sh" --repo "$TEST_REPO" >/dev/null
 [[ ! -e "$TEST_REPO/.agents/skills/overleaf-codex-workflow" && -L "$CLI" ]] || fail 'repo uninstall affected user install'
+# Sandboxed agents may omit HOME; repo scope must remain self-contained.
+env -u HOME bash "$ROOT/install.sh" --repo "$TEST_REPO" >/dev/null
+env -u HOME bash "$ROOT/uninstall.sh" --repo "$TEST_REPO" >/dev/null
+[[ -L "$CLI" ]] || fail 'HOME-free repo operations affected user CLI'
 env HOME="$TEST_HOME" bash "$ROOT/uninstall.sh" >/dev/null
 [[ ! -e "$DEST" && ! -L "$CLI" ]] || fail 'user uninstall incomplete'
 [[ -f "$TMP/cli manuscript/main.tex" ]] || fail 'uninstall removed manuscript'

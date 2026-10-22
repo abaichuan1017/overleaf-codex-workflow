@@ -42,6 +42,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$SCOPE" == "user" ]]; then
+  [[ -n "${HOME:-}" ]] || { echo 'User installation requires HOME to be set.' >&2; exit 1; }
   DEST_BASE="${HOME}/.agents/skills"
 else
   TARGET_REPO="$(cd "$TARGET_REPO" && pwd)"
@@ -49,7 +50,8 @@ else
 fi
 
 DEST="$DEST_BASE/overleaf-codex-workflow"
-CLI="${HOME}/.local/bin/overleaf-codex"
+CLI=""
+if [[ "$INSTALL_CLI" -eq 1 ]]; then CLI="${HOME}/.local/bin/overleaf-codex"; fi
 if [[ "$INSTALL_CLI" -eq 1 && ( -e "$CLI" || -L "$CLI" ) ]]; then
   [[ -L "$CLI" && "$(readlink "$CLI")" == */overleaf-codex-workflow/scripts/overleaf_workflow.sh ]] || {
     echo "Refusing to replace an unrelated CLI: $CLI" >&2

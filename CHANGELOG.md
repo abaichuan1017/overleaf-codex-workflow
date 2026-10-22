@@ -7,7 +7,7 @@
 - Resolve installed CLI symlinks correctly and run synchronization from the repository root, including linked worktrees.
 - Preserve project instructions when creating an override; update only the managed block with a local backup.
 - Bind upload reviews to the endpoint and branch, show outgoing commits, and reject commit-hook changes or mismatched fetch/push endpoints.
-- Preserve previous skill installations during upgrades and avoid changing the global CLI for repository-local installs.
+- Preserve previous skill installations during upgrades; repository-local installation leaves the global CLI unchanged and works in agent environments without `HOME`.
 - Expand offline integration tests and run them on Linux and macOS.
 
 ## 0.1.0 - 2026-08-15
